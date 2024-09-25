@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <pwd.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "lab.h"
@@ -55,6 +57,20 @@ void cd_command(struct CommandArguments* command_arg) {
         default:
             fprintf(stderr, "Error not recognized. Error code: %d\n", errno);
             break;
+    }
+}
+
+void execCommand(char *command, char** argv) {
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        fprintf(stderr, "Forking failed.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (pid == 0) {
+        exit(execvp(command, argv));
+    } else {
+        waitpid(pid, NULL, 0);
     }
 }
 
@@ -231,6 +247,10 @@ void handle_shell_line(char *line) {
     else if (strcmp(command, "history") == 0) {
         register HIST_ENTRY **list = history_list();
         if (list) for (int i = 0; list[i]; i++) printf ("%s\n", list[i]->line);
+    }
+
+    else {
+        execCommand(command, commandArguments->args);
     }
 
     free(stripped);
