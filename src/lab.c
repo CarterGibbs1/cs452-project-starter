@@ -17,6 +17,7 @@ char *HOME_DIR;
 // Constants
 long ARG_MAX; // number of arguments allowed per command
 const int MAX_STR_LENGTH = 20; // max size/length of argument
+const unsigned int PATH_MAX = 1028;
 
 // Structs
 struct CommandArguments {
@@ -41,7 +42,11 @@ void cd_command(struct CommandArguments* command_arg) {
     char *toDir = (command_arg->numArgs == 0) ? HOME_DIR : command_arg->args[0];
     chdir(toDir);
     switch (errno) {
-        case 0:
+        case 0: ;
+            char* cwd = malloc((PATH_MAX) * sizeof(char));
+            getcwd(cwd, PATH_MAX);
+            printf("%s\n", cwd);
+            free(cwd);
             break;
         case ENOTDIR:
         case ENOENT:
@@ -243,7 +248,7 @@ void shell_loop() {
     }
 }
 
-void set_envionrment_variables() {
+void set_environment_variables() {
     HOME_DIR = getenv("MY_PROMPT") ? getenv("MY_PROMPT") : getpwuid(getuid())->pw_dir;
     if (HOME_DIR == NULL) {
         fprintf(stderr, "Home directory not found.\n");
@@ -254,9 +259,7 @@ void set_envionrment_variables() {
 }
 
 int main(int argc, char *argv[]) {
-    set_envionrment_variables();
-
-    printf("%s", HOME_DIR);
+    set_environment_variables();
     
     int opt;
     // Use getopt to parse command-line arguments
