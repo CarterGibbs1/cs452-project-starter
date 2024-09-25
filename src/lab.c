@@ -27,6 +27,9 @@ struct CommandArguments {
     char** args;
 };
 
+// Debug Method Stubs
+void print_str_arr(char**, unsigned int);
+
 void print_version() {
     printf("Version: %d.%d\n", lab_VERSION_MAJOR, lab_VERSION_MINOR);
 }
@@ -60,15 +63,36 @@ void cd_command(struct CommandArguments* command_arg) {
     }
 }
 
-void execCommand(char *command, char** argv) {
-    pid_t pid = fork();
+void freeStringArr(char** strArr, unsigned int length) {
+    if (strArr == NULL) return;
+    for (unsigned int i = 0; i < length; i++) {
+        free(strArr[i]);
+    }
+    free(strArr);
+}   
 
+void execCommand(char *command, struct CommandArguments *argv) {
+    pid_t pid = fork();
     if (pid < 0) {
         fprintf(stderr, "Forking failed.\n");
         exit(EXIT_FAILURE);
     }
     if (pid == 0) {
-        exit(execvp(command, argv));
+        // Build final command;
+        char **_argv = (char**) malloc((argv->numArgs + 2) * sizeof(char*));
+        // first command
+        _argv[0] = (char*) malloc((strlen(command) + 1) * sizeof(char));
+        strcpy(_argv[0], command);
+        // arguments
+        for (unsigned int i = 1; i < argv->numArgs + 1; i++) {
+            _argv[i] = (char*) malloc((strlen(argv->args[i-1]) + 1) * sizeof(char));
+            strcpy(_argv[i], argv->args[i-1]);
+        }
+        _argv[argv->numArgs + 1] = NULL;
+        //print_str_arr(_argv, argv->numArgs + 1);
+        int exit_val = execvp(command, _argv);
+        freeStringArr(_argv, 1+argv->numArgs);
+        exit(exit_val);
     } else {
         waitpid(pid, NULL, 0);
     }
@@ -80,6 +104,13 @@ bool startsWith(char *line, char *prefix) {
         if (line[i] != prefix[i]) return false;
     }
     return true;
+}
+
+void print_str_arr(char** strArr, unsigned int length) {
+    for (unsigned int i = 0; i < length; i++) {
+        printf("%s, ", strArr[i]);
+    }
+    printf("\n");
 }
 
 char* stripBeginningWhitespace(char* line) {
@@ -250,7 +281,7 @@ void handle_shell_line(char *line) {
     }
 
     else {
-        execCommand(command, commandArguments->args);
+        execCommand(command, commandArguments);
     }
 
     free(stripped);
