@@ -8,6 +8,8 @@
 #include <readline/history.h>
 #include "lab.h"
 
+#define TOOMANYARGS (void*) 1
+
 // Environment variables
 char *MY_PROMPT;
 char *HOME_DIR;
@@ -15,6 +17,12 @@ char *HOME_DIR;
 // Constants
 long ARG_MAX; // number of arguments allowed per command
 const int MAX_STR_LENGTH = 20; // max size/length of argument
+
+// Structs
+struct CommandArguments {
+    unsigned int numArgs;
+    char** args;
+};
 
 void print_version() {
     printf("Version: %d.%d\n", lab_VERSION_MAJOR, lab_VERSION_MINOR);
@@ -25,8 +33,12 @@ void shell_exit() {
     exit(exit_status);
 }
 
-void cd_command(char *command_arg) {
-    char *toDir = (strlen(command_arg) == 0) ? HOME_DIR : command_arg;
+void cd_command(struct CommandArguments* command_arg) {
+    if (command_arg != NULL && command_arg->numArgs != 0 && command_arg->numArgs != 1) {
+        fprintf(stderr, "Too many arguments.\n");
+        return;
+    }
+    char *toDir = (command_arg->numArgs == 0) ? HOME_DIR : command_arg->args[0];
     chdir(toDir);
     switch (errno) {
         case 0:
@@ -99,7 +111,7 @@ char* stripCommand(char* line) {
     return command;
 }
 
-char** stripCommandArguments(char* line) {
+struct CommandArguments* stripCommandArguments(char* line) {
     // Skip beginning
     size_t i = 0;
     while (i < strlen(line)) {
@@ -108,17 +120,47 @@ char** stripCommandArguments(char* line) {
     }
     i++;
     // If no arguments
-    if (i >= strlen(line)) return NULL;
+    if (i >= strlen(line)) {
+        struct CommandArguments *retVal = malloc(sizeof(struct CommandArguments));
+        retVal->args = NULL;
+        retVal->numArgs = 0;
+        return retVal;
+    }
     size_t remaining_length = strlen(line) - i;
+    unsigned int curr = i;
+    while(curr < strlen(line) && line[curr] == ' ') curr++;
 
-    // TODO: Get total number of arguments to not overallocate.
+    // Get total number of arguments to not overallocate.
+    unsigned int numArgs = 1;
+    bool newArg = false;
+    while (curr < strlen(line)) {
+        if (!newArg && line[curr] == ' ') newArg = true;
+        else if (newArg && line[curr] != ' ') {
+            numArgs++;
+            newArg = false;
+        }
+        curr++;
+    }
 
+    //printf("%d\n", numArgs);
+    // Print error if number of arguments provided is more than allowed.
+    if (numArgs > ARG_MAX) {
+        fprintf(stderr, "Number of arguments provided exceeds maximum number of arguments. %d > %ld\n",
+            numArgs, ARG_MAX);
+        return TOOMANYARGS;
+    }
 
-    // allocate retVal
-    char **args = (char**) malloc(ARG_MAX * sizeof(char*));
-    for (int i = 0; i < ARG_MAX; i++) {
+    struct CommandArguments *retVal = malloc(sizeof(struct CommandArguments));
+    retVal->numArgs = numArgs;
+
+    // allocate str[]
+    char **args = (char**) malloc(numArgs * sizeof(char*));
+    for (unsigned int i = 0; i < numArgs; i++) {
         args[i] = (char*) malloc((MAX_STR_LENGTH + 1) * sizeof(char));
     }
+    retVal->args = args;
+
+    //printf("%d\n", retVal->numArgs);
 
     // Loop through each argument until end.
     size_t j;
@@ -141,15 +183,18 @@ char** stripCommandArguments(char* line) {
         args[curr_str][curr_char+1] = '\0';
         curr_char++;
     }
-    return args;
+    return retVal;
 }
 
-void freeCommandArgs(char** commandArgs) {
-    if (commandArgs == NULL) return;
-    for (int i = 0; i < ARG_MAX; i++) {
-        free(commandArgs[i]);
+void freeCommandArgs(struct CommandArguments* comm_args) {
+    if (comm_args == NULL) return;
+    if (comm_args->args != NULL){
+        for (unsigned int i = 0; i < comm_args->numArgs; i++) {
+            free(comm_args->args[i]);
+        }
+        free(comm_args->args);
     }
-    free(commandArgs);
+    free(comm_args);
 }   
 
 void handle_shell_line(char *line) {
@@ -159,18 +204,23 @@ void handle_shell_line(char *line) {
     free(line_copy);
 
     char *command = stripCommand(stripped);
-    char **command_args = stripCommandArguments(stripped);   // command_args is "" if none
+    struct CommandArguments *commandArguments = stripCommandArguments(stripped);   // command_args is NULL if none
+    if (commandArguments == TOOMANYARGS) {
+        free(command);
+        free(stripped);
+        return;
+    }
 
     if (strcmp(command, "exit") == 0 /*|| feof(stdin)*/) {     // TODO FIX feof to exit on EOF
         free(command);
-        freeCommandArgs(command_args);
+        freeCommandArgs(commandArguments);
         free(stripped);
         free(line);
         shell_exit();
     }
     
     else if (strcmp(command, "cd") == 0) {
-        //cd_command(command_args);
+        cd_command(commandArguments);
     }
 
     else if (strcmp(command, "history") == 0) {
@@ -180,7 +230,7 @@ void handle_shell_line(char *line) {
 
     free(stripped);
     free(command);
-    freeCommandArgs(command_args);
+    freeCommandArgs(commandArguments);
 }
 
 void shell_loop() {
@@ -195,6 +245,10 @@ void shell_loop() {
 
 void set_envionrment_variables() {
     HOME_DIR = getenv("MY_PROMPT") ? getenv("MY_PROMPT") : getpwuid(getuid())->pw_dir;
+    if (HOME_DIR == NULL) {
+        fprintf(stderr, "Home directory not found.\n");
+        exit(EXIT_FAILURE);
+    }
     MY_PROMPT = getenv("MY_PROMPT") ? getenv("MY_PROMPT") : "$ ";
     ARG_MAX = sysconf(_SC_ARG_MAX);
 }
