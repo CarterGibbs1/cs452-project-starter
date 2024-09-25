@@ -9,11 +9,12 @@
 #include "lab.h"
 
 // Environment variables
-const char *MY_PROMPT;
-const char *HOME_DIR;
+char *MY_PROMPT;
+char *HOME_DIR;
 
 // Constants
-const int ARG_MAX = 2;   // number of arguments allowed per command
+long ARG_MAX; // number of arguments allowed per command
+const int MAX_STR_LENGTH = 20; // max size/length of argument
 
 void print_version() {
     printf("Version: %d.%d\n", lab_VERSION_MAJOR, lab_VERSION_MINOR);
@@ -60,6 +61,26 @@ char* stripBeginningWhitespace(char* line) {
     return retVal;
 }
 
+char* stripEndingWhitespace(char* line) {
+    int i;
+    for (i=strlen(line)-1; i>=0 && line[i] == ' '; i--);
+    i++;
+    char* retVal = malloc((i + 1) * sizeof(char));
+    strncpy(retVal, line, i);
+    retVal[i] = '\0';
+    return retVal;
+}
+
+char* stripBeginEndWhitespace(char* line) {
+    if (strlen(line) == 0) return strdup(line);
+    char* strippedBeginning = stripBeginningWhitespace(line);
+    char* strippedEndBegin = stripEndingWhitespace(strippedBeginning);
+    char* retVal = strdup(strippedEndBegin);
+    free(strippedBeginning);
+    free(strippedEndBegin);
+    return retVal;
+}
+
 char* stripCommand(char* line) {
     size_t i = 0;
     while (i < strlen(line)) {
@@ -78,49 +99,78 @@ char* stripCommand(char* line) {
     return command;
 }
 
-char* stripCommandArguments(char* line) {
+char** stripCommandArguments(char* line) {
+    // Skip beginning
     size_t i = 0;
     while (i < strlen(line)) {
         if (line[i] == ' ') break;
         i++;
     }
     i++;
-    if (i >= strlen(line)) return strdup("");
+    // If no arguments
+    if (i >= strlen(line)) return NULL;
     size_t remaining_length = strlen(line) - i;
-    char* command_args = malloc((remaining_length + 1) * sizeof(char));
 
-    if (command_args == NULL) {
-        perror("Malloc failed");
-        exit(EXIT_FAILURE);
+    // TODO: Get total number of arguments to not overallocate.
+
+
+    // allocate retVal
+    char **args = (char**) malloc(ARG_MAX * sizeof(char*));
+    for (int i = 0; i < ARG_MAX; i++) {
+        args[i] = (char*) malloc((MAX_STR_LENGTH + 1) * sizeof(char));
     }
 
+    // Loop through each argument until end.
     size_t j;
+    size_t curr_str = 0;
+    size_t curr_char = 0;
     for (j = 0; j < remaining_length; j++) {
-        command_args[j] = line[i + j];
+        // find next arg if not in one
+        while (j < remaining_length && curr_char == 0 && line[i + j] == ' ') j++;
+        if (j >= remaining_length) break;
+
+        // if we find ' ', then we need to increment to next arg
+        if (line[i + j] == ' ') {
+            curr_str++;
+            curr_char = 0;
+            continue;
+        }
+        //printf("%ld, %ld: %c\n", curr_str, curr_char,line[i + j]);
+        // otherwise, keep building current str
+        args[curr_str][curr_char] = line[i + j];
+        args[curr_str][curr_char+1] = '\0';
+        curr_char++;
     }
-    command_args[remaining_length] = '\0';
-    return command_args;
+    return args;
 }
+
+void freeCommandArgs(char** commandArgs) {
+    if (commandArgs == NULL) return;
+    for (int i = 0; i < ARG_MAX; i++) {
+        free(commandArgs[i]);
+    }
+    free(commandArgs);
+}   
 
 void handle_shell_line(char *line) {
     char *line_copy = strdup(line);
     for (int i = 0; line_copy[i]; i++) line_copy[i] = tolower(line_copy[i]);
-    char* stripped = stripBeginningWhitespace(line_copy);
+    char* stripped = stripBeginEndWhitespace(line_copy);
     free(line_copy);
 
     char *command = stripCommand(stripped);
-    char *command_args = stripCommandArguments(stripped);   // command_args is "" if none
+    char **command_args = stripCommandArguments(stripped);   // command_args is "" if none
 
     if (strcmp(command, "exit") == 0 /*|| feof(stdin)*/) {     // TODO FIX feof to exit on EOF
         free(command);
-        free(command_args);
+        freeCommandArgs(command_args);
         free(stripped);
         free(line);
         shell_exit();
     }
     
     else if (strcmp(command, "cd") == 0) {
-        cd_command(command_args);
+        //cd_command(command_args);
     }
 
     else if (strcmp(command, "history") == 0) {
@@ -130,7 +180,7 @@ void handle_shell_line(char *line) {
 
     free(stripped);
     free(command);
-    free(command_args);
+    freeCommandArgs(command_args);
 }
 
 void shell_loop() {
@@ -146,6 +196,7 @@ void shell_loop() {
 void set_envionrment_variables() {
     HOME_DIR = getenv("MY_PROMPT") ? getenv("MY_PROMPT") : getpwuid(getuid())->pw_dir;
     MY_PROMPT = getenv("MY_PROMPT") ? getenv("MY_PROMPT") : "$ ";
+    ARG_MAX = sysconf(_SC_ARG_MAX);
 }
 
 int main(int argc, char *argv[]) {
