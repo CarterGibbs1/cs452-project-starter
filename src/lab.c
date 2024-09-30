@@ -27,12 +27,161 @@ struct CommandArguments {
     char** args;
 };
 
-// Debug Method Stubs
+// Method Stubs
 void print_str_arr(char**, unsigned int);
 
 void print_version() {
     printf("Version: %d.%d\n", lab_VERSION_MAJOR, lab_VERSION_MINOR);
 }
+
+/////
+
+char* stripBeginningWhitespace(char const *line) {
+    size_t i = 0;
+    for (i=0; i<strlen(line) && line[i] == ' '; i++);
+    char* retVal = malloc((strlen(line) - i + 1) * sizeof(char));
+    size_t j;
+    for (j=0; j < strlen(line) - i; j++) {
+        retVal[j] = line[i+j];
+    }
+    retVal[j] = '\0';
+    return retVal;
+}
+
+char* stripEndingWhitespace(char const *line) {
+    int i;
+    for (i=strlen(line)-1; i>=0 && line[i] == ' '; i--);
+    i++;
+    char* retVal = malloc((i + 1) * sizeof(char));
+    strncpy(retVal, line, i);
+    retVal[i] = '\0';
+    return retVal;
+}
+
+char* stripBeginEndWhitespace(char const *line) {
+    if (strlen(line) == 0) return strdup(line);
+    char* strippedBeginning = stripBeginningWhitespace(line);
+    char* strippedEndBegin = stripEndingWhitespace(strippedBeginning);
+    char* retVal = strdup(strippedEndBegin);
+    free(strippedBeginning);
+    free(strippedEndBegin);
+    return retVal;
+}
+
+char *get_prompt(const char *env) {
+    return getenv(env) ? getenv(env) : getpwuid(getuid())->pw_dir;
+}
+
+int change_dir(char **dir) {
+    chdir(dir);
+    switch (errno) {
+        case 0: ;
+            char* cwd = malloc((PATH_MAX) * sizeof(char));
+            getcwd(cwd, PATH_MAX);
+            printf("%s\n", cwd);
+            free(cwd);
+            return 0;
+        case ENOTDIR:
+        case ENOENT:
+            fprintf(stderr, "Directory not found.\n");
+            return -1;
+        default:
+            fprintf(stderr, "Error not recognized. Error code: %d\n", errno);
+            return -1;
+    }
+}
+
+char **cmd_parse(char const *line) {
+    char *line_copy = strdup(line);
+    char *strippedLine = trim_white(line_copy);
+    free(line_copy);
+    // Get total number of arguments to not overallocate.
+    size_t curr = 0;
+    unsigned int numArgs = 1;
+    bool newArg = false;
+    while (curr < strlen(strippedLine)) {
+        if (!newArg && line[curr] == ' ') newArg = true;
+        else if (newArg && line[curr] != ' ') {
+            numArgs++;
+            newArg = false;
+        }
+        curr++;
+    }
+
+    //printf("%d\n", numArgs);
+    // Print error if number of arguments provided is more than allowed.
+    if (numArgs > ARG_MAX) {
+        fprintf(stderr, "Number of arguments provided exceeds maximum number of arguments. %d > %ld\n",
+            numArgs, ARG_MAX);
+        free(strippedLine);
+        return TOOMANYARGS;
+    }
+    // allocate str[]
+    char **retVal = (char**) malloc((numArgs + 1) * sizeof(char*));
+    for (unsigned int i = 0; i < numArgs; i++) {
+        retVal[i] = (char*) malloc((MAX_STR_LENGTH + 1) * sizeof(char));
+    }
+    retVal[numArgs] = NULL;
+
+    //printf("%d\n", retVal->numArgs);
+
+    // Loop through each argument until end.
+    size_t i;
+    size_t curr_str = 0;
+    size_t curr_char = 0;
+    for (i = 0; i < strlen(strippedLine); i++) {
+        // find next arg if not in one
+        while (i < strlen(strippedLine) && curr_char == 0 && line[i] == ' ') i++;
+        if (i >= strlen(strippedLine)) break;
+
+        // if we find ' ', then we need to increment to next arg
+        if (line[i] == ' ') {
+            curr_str++;
+            curr_char = 0;
+            continue;
+        }
+        //printf("%ld, %ld: %c\n", curr_str, curr_char,line[i + j]);
+        // otherwise, keep building current str
+        retVal[curr_str][curr_char] = line[i];
+        retVal[curr_str][curr_char+1] = '\0';
+        curr_char++;
+    }
+    free(strippedLine);
+    return retVal;
+}
+
+void cmd_free(char ** line) {
+    if (line == NULL) return;
+    for (unsigned int i = 0; line[i] != NULL; i++) {
+        free(line[i]);
+    }
+    free(line);
+}
+
+char *trim_white(char *line) {
+    return stripBeginEndWhitespace(line);
+}
+
+bool do_builtin(struct shell *sh, char **argv) {
+    return false;
+}
+
+void sh_init(struct shell *sh) {
+
+}
+
+void sh_destroy(struct shell *sh) {
+
+}
+
+void parse_args(int argc, char **argv) {
+
+}
+
+
+
+
+////////
 
 void shell_exit() {
     int exit_status = EXIT_SUCCESS;
@@ -111,38 +260,6 @@ void print_str_arr(char** strArr, unsigned int length) {
         printf("%s, ", strArr[i]);
     }
     printf("\n");
-}
-
-char* stripBeginningWhitespace(char* line) {
-    size_t i = 0;
-    for (i=0; i<strlen(line) && line[i] == ' '; i++);
-    char* retVal = malloc((strlen(line) - i + 1) * sizeof(char));
-    size_t j;
-    for (j=0; j < strlen(line) - i; j++) {
-        retVal[j] = line[i+j];
-    }
-    retVal[j] = '\0';
-    return retVal;
-}
-
-char* stripEndingWhitespace(char* line) {
-    int i;
-    for (i=strlen(line)-1; i>=0 && line[i] == ' '; i--);
-    i++;
-    char* retVal = malloc((i + 1) * sizeof(char));
-    strncpy(retVal, line, i);
-    retVal[i] = '\0';
-    return retVal;
-}
-
-char* stripBeginEndWhitespace(char* line) {
-    if (strlen(line) == 0) return strdup(line);
-    char* strippedBeginning = stripBeginningWhitespace(line);
-    char* strippedEndBegin = stripEndingWhitespace(strippedBeginning);
-    char* retVal = strdup(strippedEndBegin);
-    free(strippedBeginning);
-    free(strippedEndBegin);
-    return retVal;
 }
 
 char* stripCommand(char* line) {
@@ -307,25 +424,4 @@ void set_environment_variables() {
     }
     MY_PROMPT = getenv("MY_PROMPT") ? getenv("MY_PROMPT") : "$ ";
     ARG_MAX = sysconf(_SC_ARG_MAX);
-}
-
-int main(int argc, char *argv[]) {
-    set_environment_variables();
-    
-    int opt;
-    // Use getopt to parse command-line arguments
-    while ((opt = getopt(argc, argv, "v")) != -1) {
-        switch (opt) {
-            case 'v':
-                // Print the version and exit
-                print_version();
-                return 0;
-                break;
-            default: break;
-        }
-    }
-
-    shell_loop();
-
-    return 0;
 }

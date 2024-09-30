@@ -5,6 +5,7 @@ BUILD_DIR ?= build
 TEST_DIR ?= tests
 SRC_DIR ?= src
 EXE_DIR ?= app
+CC ?= gcc
 
 SRCS := $(shell find $(SRC_DIR) -name *.c)
 OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
