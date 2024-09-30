@@ -14,6 +14,7 @@
 
 // Environment variables
 char *MY_PROMPT;
+char *MY_PROMPT_DEFAULT = "shell>";
 char *HOME_DIR;
 
 // Constants
@@ -69,16 +70,57 @@ char* stripBeginEndWhitespace(char const *line) {
 }
 
 char *get_prompt(const char *env) {
-    return getenv(env) ? getenv(env) : getpwuid(getuid())->pw_dir;
+    char *choice = getenv(env) ? getenv(env) : MY_PROMPT_DEFAULT;
+    char *retVal = strdup(choice);
+    return retVal;
 }
 
+char* join_strings(char** str_array, int start) {
+    // total length
+    int total_length = 0;
+    int size;
+    for (size = 0; str_array[size + start] != NULL; size++) {
+        total_length += strlen(str_array[size + start]);
+    }
+    size++;
+    if (size <= 1) {
+        return strdup("");
+    }
+    total_length += (size - start);
+    char* result = (char*)malloc(total_length * sizeof(char));
+    result[0] = '\0';
+    for (int i = 0; i < size - 1; i++) {
+        strcat(result, str_array[i + start]);
+        if (i < size - 2) {
+            strcat(result, " ");
+        }
+    }
+    result[total_length - 1] = '\0';
+    return result;
+}
+
+void print_str_arr_null_escaped(char** strArr) {
+    for (unsigned int i = 0; strArr[i] != NULL; i++) {
+        printf("%s, ", strArr[i]);
+    }
+    printf("\n");
+}
+
+
 int change_dir(char **dir) {
-    chdir(dir);
+    char *dir_str = join_strings(dir, 1);
+    // special cases
+    if (strcmp(dir_str, "") == 0) {
+        free(dir_str);
+        dir_str = strdup(getenv("HOME"));
+    }
+    chdir(dir_str);
+    free(dir_str);
     switch (errno) {
         case 0: ;
             char* cwd = malloc((PATH_MAX) * sizeof(char));
             getcwd(cwd, PATH_MAX);
-            printf("%s\n", cwd);
+            //printf("%s\n", cwd);
             free(cwd);
             return 0;
         case ENOTDIR:
@@ -92,9 +134,9 @@ int change_dir(char **dir) {
 }
 
 char **cmd_parse(char const *line) {
+    if (ARG_MAX == 0) ARG_MAX = sysconf(_SC_ARG_MAX);
     char *line_copy = strdup(line);
     char *strippedLine = trim_white(line_copy);
-    free(line_copy);
     // Get total number of arguments to not overallocate.
     size_t curr = 0;
     unsigned int numArgs = 1;
@@ -124,8 +166,6 @@ char **cmd_parse(char const *line) {
     retVal[numArgs] = NULL;
 
     //printf("%d\n", retVal->numArgs);
-
-    // Loop through each argument until end.
     size_t i;
     size_t curr_str = 0;
     size_t curr_char = 0;
@@ -141,7 +181,6 @@ char **cmd_parse(char const *line) {
             continue;
         }
         //printf("%ld, %ld: %c\n", curr_str, curr_char,line[i + j]);
-        // otherwise, keep building current str
         retVal[curr_str][curr_char] = line[i];
         retVal[curr_str][curr_char+1] = '\0';
         curr_char++;
@@ -159,7 +198,21 @@ void cmd_free(char ** line) {
 }
 
 char *trim_white(char *line) {
-    return stripBeginEndWhitespace(line);
+    //return stripBeginEndWhitespace(line);
+    size_t start = 0;
+    while (start < strlen(line) && line[start] == ' ') start++;
+    size_t end = 0;
+    while (end < strlen(line) && line[strlen(line) - end - 1] == ' ') end++;
+    if (start == strlen(line) && end == strlen(line)) {
+        line[0] = '\0';
+        return line;
+    }
+    for (size_t i = 0; i < strlen(line) - start; i++) {
+        //printf("%d, %d\n", i, start);
+        line[i] = line[start + i];
+    }
+    line[strlen(line) - start - end] = '\0';
+    return line;
 }
 
 bool do_builtin(struct shell *sh, char **argv) {
