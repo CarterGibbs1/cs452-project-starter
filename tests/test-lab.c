@@ -32,6 +32,8 @@ void test_cmd_parse2(void)
      TEST_ASSERT_EQUAL_STRING(expected[0],actual[0]);
      TEST_ASSERT_EQUAL_STRING(expected[1],actual[1]);
      TEST_ASSERT_FALSE(actual[2]);
+     cmd_free(actual);
+     free(stng);
      free(expected[0]);
      free(expected[1]);
      free(expected);

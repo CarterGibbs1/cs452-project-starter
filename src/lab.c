@@ -4,10 +4,12 @@
 #include <unistd.h>
 #include <pwd.h>
 #include <errno.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <termios.h>
 #include "lab.h"
 
 #define TOOMANYARGS (void*) 1
@@ -23,10 +25,23 @@ const int MAX_STR_LENGTH = 20; // max size/length of argument
 const unsigned int PATH_MAX = 1028;
 
 // Structs
+// bg_job uses linked_list structure for ease.
+struct bg_job {
+    int job_num;
+    pid_t pid;
+    char *command;
+    struct bg_job *next;
+    bool is_running;
+};
+
+struct bg_job *head = NULL;
+int num_jobs = 0;
+
+/**
 struct CommandArguments {
     unsigned int numArgs;
     char** args;
-};
+}; */
 
 // Method Stubs
 void print_str_arr(char**, unsigned int);
@@ -36,6 +51,57 @@ void print_version() {
 }
 
 /////
+
+void shell_exit() {
+    int exit_status = EXIT_SUCCESS;
+    exit(exit_status);
+}
+
+void check_background_jobs() {
+    struct bg_job *curr = head;
+    while (curr != NULL) {
+        int status;
+        pid_t result = waitpid(curr->pid, &status, WNOHANG);
+        if (result == 0) {
+            // traverse
+            curr = curr->next;
+        } else if (result < 0) {
+            curr->is_running = false;;
+        }
+    }
+}
+
+// print all jobs, for jobs command
+void print_all_jobs() {
+    check_background_jobs();
+    struct bg_job *curr = head;
+    struct bg_job *prev = NULL;
+
+    while (curr != NULL) {
+        if (curr->is_running) {
+            printf("[%d] %d Running %s\n", curr->job_num, curr->pid, curr->command);
+        } else {
+            printf("[%d] Done\t%s\n", curr->job_num, curr->command);
+        }
+        
+
+        if (curr->is_running) {
+            if (prev == NULL) {
+                head = curr->next;
+            } else {
+                prev->next = curr->next;
+            }
+            free(curr->command);
+            struct bg_job *temp = curr;
+            curr = curr->next;
+            free(temp);
+        } else {
+            // Traverse to the next job
+            prev = curr;
+            curr = curr->next;
+        }
+    }
+}
 
 char* stripBeginningWhitespace(char const *line) {
     size_t i = 0;
@@ -137,6 +203,10 @@ char **cmd_parse(char const *line) {
     if (ARG_MAX == 0) ARG_MAX = sysconf(_SC_ARG_MAX);
     char *line_copy = strdup(line);
     char *strippedLine = trim_white(line_copy);
+    if (strlen(strippedLine) == 0) {
+        free(strippedLine);
+        return NULL;
+    }
     // Get total number of arguments to not overallocate.
     size_t curr = 0;
     unsigned int numArgs = 1;
@@ -216,30 +286,187 @@ char *trim_white(char *line) {
 }
 
 bool do_builtin(struct shell *sh, char **argv) {
-    return false;
+    if (strcmp(argv[0],  "exit") == 0) {
+        shell_exit();
+    }
+    else if (strcmp(argv[0],  "cd") == 0) {
+        change_dir(argv);
+    }
+    else if (strcmp(argv[0],  "jobs") == 0) {
+        print_all_jobs();
+    }
+    else if (strcmp(argv[0],  "history") == 0) {
+        register HIST_ENTRY **list = history_list();
+        if (list) for (int i = 0; list[i]; i++) printf ("%s\n", list[i]->line);
+    } else {
+        return false;
+    }
+    return true;
 }
 
 void sh_init(struct shell *sh) {
+    sh->shell_terminal = STDIN_FILENO;
+    sh->shell_is_interactive = isatty(sh->shell_terminal);
+    sh->prompt = get_prompt("MY_PROMPT");
 
+    if (sh->shell_is_interactive) {
+        /* Loop until we are in the foreground.  */
+        while (tcgetpgrp(sh->shell_terminal) != (sh->shell_pgid = getpgrp()))
+            kill(sh->shell_pgid, SIGTTIN);
+
+        /* Ignore interactive and job-control signals.  */
+        signal(SIGINT, SIG_IGN);
+        signal(SIGQUIT, SIG_IGN);
+        signal(SIGTSTP, SIG_IGN);
+        signal(SIGTTIN, SIG_IGN);
+        signal(SIGTTOU, SIG_IGN);
+        signal(SIGCHLD, SIG_IGN);
+
+        /* Put ourselves in our own process group.  */
+        sh->shell_pgid = getpid();
+        if (setpgid (sh->shell_pgid, sh->shell_pgid) < 0) {
+            perror ("Couldn't put the shell in its own process group");
+            exit (1);
+        }
+
+        /* Grab control of the terminal.  */
+        tcsetpgrp(sh->shell_terminal, sh->shell_pgid);
+
+        /* Save default terminal attributes for shell.  */
+        tcgetattr(sh->shell_terminal, &sh->shell_tmodes);
+    }
 }
 
 void sh_destroy(struct shell *sh) {
-
+    free(sh->prompt);
+    free(sh);
 }
 
 void parse_args(int argc, char **argv) {
+    int opt;
+    // Use getopt to parse command-line arguments
+    while ((opt = getopt(argc, argv, "v")) != -1) {
+        switch (opt) {
+            case 'v':
+                // Print the version and exit
+                print_version();
+                exit(EXIT_SUCCESS);
+                break;
+            default:
+                break;
+        }
+    }
+}
 
+// print only completed jobs
+void print_and_clean_jobs() {
+    check_background_jobs();
+    struct bg_job *curr = head;
+    struct bg_job *prev = NULL;
+    while (curr != NULL) {
+        if (curr->is_running) {
+            // traverse
+            curr = curr->next;
+            prev = curr;
+        } else if (!curr->is_running) {
+            printf("[%d] Done %s\n", curr->job_num, curr->command);
+
+            if (prev == NULL) {
+                head = curr->next;
+            } else {
+                prev->next = curr->next;
+            }
+
+            free(curr->command);
+            struct bg_job *temp = curr;
+            curr = curr->next;
+            free(temp);
+        }
+    }
+}
+
+// checks if it should run as a background process
+bool is_bg_process(char *line) {
+    if (strlen(line) > 0 && line[strlen(line) - 1] == '&') {
+        line[strlen(line) - 1] = '\0';
+        return true;
+    }
+    return false;
+}
+
+void execCommand(struct shell *sh, char **cmd, bool run_in_bg) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "Forking failed.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (pid == 0) {
+        pid_t child = getpid();
+        setpgid(child, child);
+        if (!run_in_bg)
+            tcsetpgrp(sh->shell_terminal,child);
+
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        signal(SIGTTOU, SIG_DFL);
+
+        int exit_val = execvp(cmd[0], cmd);
+        if (exit_val == -1) {
+            printf("Unknown command: %s\n", cmd[0]);
+        }
+
+        exit(exit_val);
+    } else {
+        if (run_in_bg) {
+            struct bg_job *job = (struct bg_job*) malloc(sizeof(struct bg_job));
+            job->job_num = ++num_jobs;
+            job->pid = pid;
+            char *tmp2 = join_strings(cmd, 0);
+            char *tmp = malloc((strlen(tmp2) + 2) * sizeof(char));
+            tmp[0] = '\0';
+            strcat(tmp, tmp2);
+            strcat(tmp, "&");
+            free(tmp2);
+            job->command = tmp;
+            job->next = head;
+            head = job;
+            printf("[%d] %d %s\n", job->job_num, pid, job->command);
+        }
+        else {
+            waitpid(pid, NULL, 0);
+            tcsetpgrp(sh->shell_terminal, sh->shell_pgid);
+        }
+    }
+}
+
+void handle_shell_line(struct shell *sh, char *line) {
+    char *cmd = strdup(line);
+    for (int i = 0; cmd[i]; i++) cmd[i] = tolower(cmd[i]);
+    trim_white(cmd);
+    bool run_in_bg = is_bg_process(cmd);
+    char** parsed_cmd = cmd_parse(cmd);
+    if (parsed_cmd != NULL && !do_builtin(sh, parsed_cmd)) {
+        execCommand(sh, parsed_cmd, run_in_bg);
+        cmd_free(parsed_cmd);
+        print_and_clean_jobs();
+    }
+    free(cmd);
 }
 
 
-
-
-////////
-
-void shell_exit() {
-    int exit_status = EXIT_SUCCESS;
-    exit(exit_status);
+void shell_loop(struct shell *sh) {
+    char *line;
+    using_history();
+    while ((line=readline(sh->prompt))){
+        handle_shell_line(sh, line);
+        add_history(line);
+        free(line);
+    }
 }
+
+/**
 
 void cd_command(struct CommandArguments* command_arg) {
     if (command_arg != NULL && command_arg->numArgs != 0 && command_arg->numArgs != 1) {
@@ -433,7 +660,7 @@ void handle_shell_line(char *line) {
         return;
     }
 
-    if (strcmp(command, "exit") == 0 /*|| feof(stdin)*/) {     // TODO FIX feof to exit on EOF
+    if (strcmp(command, "exit") == 0) {
         free(command);
         freeCommandArgs(commandArguments);
         free(stripped);
@@ -477,4 +704,4 @@ void set_environment_variables() {
     }
     MY_PROMPT = getenv("MY_PROMPT") ? getenv("MY_PROMPT") : "$ ";
     ARG_MAX = sysconf(_SC_ARG_MAX);
-}
+}*/
