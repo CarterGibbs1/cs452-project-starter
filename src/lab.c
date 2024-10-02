@@ -374,6 +374,7 @@ void parse_args(int argc, char **argv) {
                 exit(EXIT_SUCCESS);
                 break;
             default:
+                exit(EXIT_FAILURE);
                 break;
         }
     }
