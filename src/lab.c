@@ -21,7 +21,7 @@ char *HOME_DIR;
 
 // Constants
 long ARG_MAX; // number of arguments allowed per command
-const int MAX_STR_LENGTH = 20; // max size/length of argument
+const int MAX_STR_LENGTH = 1028; // max size/length of argument
 const unsigned int PATH_MAX = 1028;
 
 // Structs
@@ -62,20 +62,17 @@ void check_background_jobs() {
     while (curr != NULL) {
         int status;
         pid_t result = waitpid(curr->pid, &status, WNOHANG);
-        if (result == 0) {
-            // traverse
-            curr = curr->next;
-        } else if (result < 0) {
+        if (result < 0) {
             curr->is_running = false;;
         }
+        curr = curr->next;
     }
 }
 
+
 // print all jobs, for jobs command
 void print_all_jobs() {
-    check_background_jobs();
     struct bg_job *curr = head;
-    struct bg_job *prev = NULL;
 
     while (curr != NULL) {
         if (curr->is_running) {
@@ -83,22 +80,40 @@ void print_all_jobs() {
         } else {
             printf("[%d] Done\t%s\n", curr->job_num, curr->command);
         }
-        
+        curr = curr->next;
+    }
+}
 
+void print_completed_jobs() {
+    struct bg_job *curr = head;
+
+    while (curr != NULL) {
+        if (!curr->is_running) {
+            printf("[%d] Done %s\n", curr->job_num, curr->command);
+        }
+        curr = curr->next;
+    }
+}
+
+void clean_completed_jobs() {
+    struct bg_job *curr = head;
+    struct bg_job *prev = NULL;
+    while (curr != NULL){
         if (curr->is_running) {
+            // traverse
+            curr = curr->next;
+            prev = curr;
+        } else if (!curr->is_running) {
             if (prev == NULL) {
                 head = curr->next;
             } else {
                 prev->next = curr->next;
             }
+
             free(curr->command);
             struct bg_job *temp = curr;
             curr = curr->next;
             free(temp);
-        } else {
-            // Traverse to the next job
-            prev = curr;
-            curr = curr->next;
         }
     }
 }
@@ -250,7 +265,7 @@ char **cmd_parse(char const *line) {
             curr_char = 0;
             continue;
         }
-        //printf("%ld, %ld: %c\n", curr_str, curr_char,line[i + j]);
+        //printf("%ld, %ld: %c\n", curr_str, curr_char, line[i]);
         retVal[curr_str][curr_char] = line[i];
         retVal[curr_str][curr_char+1] = '\0';
         curr_char++;
@@ -286,22 +301,27 @@ char *trim_white(char *line) {
 }
 
 bool do_builtin(struct shell *sh, char **argv) {
+    if (argv == NULL)
+        return false;
     if (strcmp(argv[0],  "exit") == 0) {
-        shell_exit();
+        cmd_free(argv);
+        sh_destroy(sh);
+        return true;
     }
     else if (strcmp(argv[0],  "cd") == 0) {
         change_dir(argv);
+        return true;
     }
     else if (strcmp(argv[0],  "jobs") == 0) {
         print_all_jobs();
+        return true;
     }
     else if (strcmp(argv[0],  "history") == 0) {
         register HIST_ENTRY **list = history_list();
         if (list) for (int i = 0; list[i]; i++) printf ("%s\n", list[i]->line);
-    } else {
-        return false;
+        return true;
     }
-    return true;
+    return false;
 }
 
 void sh_init(struct shell *sh) {
@@ -325,8 +345,8 @@ void sh_init(struct shell *sh) {
         /* Put ourselves in our own process group.  */
         sh->shell_pgid = getpid();
         if (setpgid (sh->shell_pgid, sh->shell_pgid) < 0) {
-            perror ("Couldn't put the shell in its own process group");
-            exit (1);
+            perror("Couldn't put the shell in its own process group");
+            exit(EXIT_FAILURE);
         }
 
         /* Grab control of the terminal.  */
@@ -340,6 +360,7 @@ void sh_init(struct shell *sh) {
 void sh_destroy(struct shell *sh) {
     free(sh->prompt);
     free(sh);
+    shell_exit();
 }
 
 void parse_args(int argc, char **argv) {
@@ -416,6 +437,7 @@ void execCommand(struct shell *sh, char **cmd, bool run_in_bg) {
         if (exit_val == -1) {
             printf("Unknown command: %s\n", cmd[0]);
         }
+        cmd_free(cmd);
 
         exit(exit_val);
     } else {
@@ -423,6 +445,7 @@ void execCommand(struct shell *sh, char **cmd, bool run_in_bg) {
             struct bg_job *job = (struct bg_job*) malloc(sizeof(struct bg_job));
             job->job_num = ++num_jobs;
             job->pid = pid;
+            job->is_running = true;
             char *tmp2 = join_strings(cmd, 0);
             char *tmp = malloc((strlen(tmp2) + 2) * sizeof(char));
             tmp[0] = '\0';
@@ -447,12 +470,17 @@ void handle_shell_line(struct shell *sh, char *line) {
     trim_white(cmd);
     bool run_in_bg = is_bg_process(cmd);
     char** parsed_cmd = cmd_parse(cmd);
-    if (parsed_cmd != NULL && !do_builtin(sh, parsed_cmd)) {
-        execCommand(sh, parsed_cmd, run_in_bg);
-        cmd_free(parsed_cmd);
-        print_and_clean_jobs();
-    }
     free(cmd);
+    check_background_jobs();
+    bool was_built_in = do_builtin(sh, parsed_cmd);
+    if (parsed_cmd != NULL && !was_built_in) {
+        execCommand(sh, parsed_cmd, run_in_bg);   
+    }
+    if (!was_built_in) {
+        print_completed_jobs();
+    }
+    clean_completed_jobs();
+    cmd_free(parsed_cmd);
 }
 
 

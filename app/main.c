@@ -1,5 +1,7 @@
 #include "../src/lab.h"
 
+void shell_loop(struct shell*);
+
 int main(int argc, char *argv[]) {
 
     parse_args(argc, argv);
